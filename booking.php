@@ -23,6 +23,8 @@ $error = '';
 $success = '';
 $service_id = null;
 $service_details = null;
+$tech_details = null;
+$tech_id = null;
 
 // Load states for manual dropdown-based address system
 $states = [];
@@ -33,55 +35,34 @@ try {
 }
 
 // 3. Fetch the specific service details they clicked on
-// We check if 'service_id' exists in the URL (e.g. booking.php?service_id=2)
 if (isset($_GET['service_id'])) {
-    
-    // Convert to an integer for safety
     $service_id = (int)$_GET['service_id'];
-    
-    // Fetch this exact service from the database to display its name/price on the form
     $stmt = $pdo->prepare("SELECT * FROM services WHERE id = ?");
     $stmt->execute([$service_id]);
     $service_details = $stmt->fetch();
-    
-    // If the user manually changed the URL ID to something that doesn't exist:
     if (!$service_details) {
         $error = "The selected service does not exist.";
     }
 } else {
-    // If they came to booking.php without selecting a service first
     header('Location: services.php');
     exit();
 }
 
-function slotAvailable(PDO $pdo, int $serviceId, string $date, string $time, int $qty): bool {
-    $stmt = $pdo->prepare("SELECT available_count FROM booking_slots WHERE service_id = ? AND date = ? AND time = ? LIMIT 1");
-    $stmt->execute([$serviceId, $date, $time]);
-    $available = $stmt->fetchColumn();
-
-    // If slots aren't pre-seeded, initialize based on currently-available technicians for that service.
-    if ($available === false) {
-        $cnt = $pdo->prepare("SELECT COUNT(*) FROM technicians WHERE service_id = ? AND status = 'available' AND deleted_at IS NULL");
-        $cnt->execute([$serviceId]);
-        $totalTech = (int)$cnt->fetchColumn();
-        if ($totalTech <= 0) {
-            return false;
-        }
-        $ins = $pdo->prepare(
-            "INSERT INTO booking_slots (service_id, date, time, available_count)
-             VALUES (?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE available_count = available_count"
-        );
-        $ins->execute([$serviceId, $date, $time, $totalTech]);
-
-        $stmt->execute([$serviceId, $date, $time]);
-        $available = $stmt->fetchColumn();
-        if ($available === false) {
-            return false;
-        }
+// 3b. Fetch technician if tech_id provided
+if (isset($_GET['tech_id'])) {
+    $tech_id = (int)$_GET['tech_id'];
+    $t_stmt = $pdo->prepare("SELECT * FROM technicians WHERE id = ? AND service_id = ? AND deleted_at IS NULL LIMIT 1");
+    $t_stmt->execute([$tech_id, $service_id]);
+    $tech_details = $t_stmt->fetch();
+    if (!$tech_details) {
+        // Invalid tech_id — send back to technician selection
+        header('Location: technicians.php?service_id=' . $service_id);
+        exit();
     }
-
-    return (int)$available >= $qty;
+} else {
+    // No tech selected — redirect to technician selection (required step)
+    header('Location: technicians.php?service_id=' . $service_id);
+    exit();
 }
 
 function generateFullAddress(string $flatNo, string $area, string $city, string $state, string $pincode): string {
@@ -112,6 +93,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $service_details) {
         $service_date = trim($_POST['service_date'] ?? '');
         $service_time = trim($_POST['service_time'] ?? '');
         $technician_count = (int)($_POST['technician_count'] ?? 1);
+        
+        // tech_id comes from a hidden input in the form
+        if (isset($_POST['tech_id'])) {
+            $tech_id = (int)$_POST['tech_id'];
+        }
 
         $problem_desc = trim($_POST['problem_description'] ?? '');
         $emergency_ui = $_POST['emergency_level'] ?? 'Normal';
@@ -166,31 +152,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $service_details) {
                     // Service area restriction (service_available_cities)
                     if (!serviceSupportsCity($pdo, (int)$service_id, $city_id)) {
                         $error = "Service not available in your selected city.";
-                    } elseif (!slotAvailable($pdo, (int)$service_id, $service_date, $service_time, $technician_count)) {
-                        $error = "No technicians available at selected time. Please choose another slot.";
                     } else {
+                        // Check if technician is already booked for this slot
+                        $conflictStmt = $pdo->prepare(
+                            "SELECT COUNT(*) FROM bookings
+                             WHERE technician_id = ? AND service_date = ? AND service_time = ?
+                               AND status NOT IN ('Cancelled')"
+                        );
+                        $conflictStmt->execute([$tech_id, $service_date, $service_time]);
+                        if ((int)$conflictStmt->fetchColumn() > 0) {
+                            $error = "This time slot is already booked for the selected provider. Please choose another slot.";
+                        } else {
                         $_SESSION['pending_booking'] = [
-                            'user_id' => $user_id,
-                            'service_id' => (int)$service_id,
-                            'technician_count' => $technician_count,
-                            'service_date' => $service_date,
-                            'service_time' => $service_time,
-                            'emergency_level' => $emergency_level,
-                            'problem_description' => $problem_desc,
-                            'contact' => $contact,
+                            'user_id'            => $user_id,
+                            'service_id'         => (int)$service_id,
+                            'technician_id'      => (int)$tech_id,
+                            'technician_count'   => $technician_count,
+                            'service_date'       => $service_date,
+                            'service_time'       => $service_time,
+                            'emergency_level'    => $emergency_level,
+                            'problem_description'=> $problem_desc,
+                            'contact'            => $contact,
 
-                            'state' => $state_name,
-                            'city' => $city_name,
-                            'area' => $area,
-                            'pincode' => $pincode,
-                            'flat_no' => $flat_no,
-                            'landmark' => $landmark,
-                            'full_address' => $full_address,
+                            'state'       => $state_name,
+                            'city'        => $city_name,
+                            'area'        => $area,
+                            'pincode'     => $pincode,
+                            'flat_no'     => $flat_no,
+                            'landmark'    => $landmark,
+                            'full_address'=> $full_address,
                         ];
-                        unset($_SESSION['otp_verified']);
                         unset($_SESSION['applied_coupon']);
-                        header('Location: otp.php');
+                        header('Location: payment.php');
                         exit();
+                        } // End else tech conflict
                     }
                 }
             } catch (PDOException $e) {
@@ -231,6 +226,34 @@ if ($session_location) {
     
     <div class="form-container" style="max-width: 700px;">
         
+        <!-- Technician Mini-Profile Banner -->
+        <?php if ($tech_details): ?>
+        <div style="display: flex; align-items: center; gap: 16px; background: linear-gradient(135deg, #f0f4ff, #e8f0fe); border-radius: 16px; padding: 16px 20px; margin-bottom: 24px; border: 1px solid #c7d7fc;">
+            <?php $hasPhoto = !empty($tech_details['photo']) && file_exists(__DIR__ . '/' . $tech_details['photo']); ?>
+            <?php if ($hasPhoto): ?>
+                <img src="<?= htmlspecialchars($tech_details['photo']) ?>" alt="<?= htmlspecialchars($tech_details['name']) ?>"
+                     style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.15); flex-shrink: 0;">
+            <?php else: ?>
+                <!-- Random portrait placeholder -->
+                <img src="https://randomuser.me/api/portraits/men/<?php echo ($tech_details['id'] % 90) + 1; ?>.jpg" alt="<?= htmlspecialchars($tech_details['name']) ?>"
+                     style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.15); flex-shrink: 0;">
+            <?php endif; ?>
+            <div style="flex: 1;">
+                <div style="font-weight: 800; font-size: 1.05rem; color: var(--text-main);"><?= htmlspecialchars($tech_details['name']) ?></div>
+                <div style="font-size: 0.8rem; color: var(--accent-color); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin: 2px 0;">
+                    <?= htmlspecialchars($tech_details['specialty'] ?: 'Professional') ?>
+                </div>
+                <div style="font-size: 0.85rem; color: #F59E0B;">
+                    <?php $r = round((float)($tech_details['rating'] ?? 4.5)); for ($i=1;$i<=5;$i++) echo $i<=$r?'★':'☆'; ?>
+                    <span style="color: var(--text-muted); margin-left: 4px;"><?= number_format((float)($tech_details['rating']??4.5),1) ?> · <?= (int)($tech_details['total_reviews']??0) ?> reviews</span>
+                </div>
+            </div>
+            <a href="technicians.php?service_id=<?= (int)$service_id ?>" style="font-size: 0.82rem; color: var(--primary-color); font-weight: 600; text-decoration: none; white-space: nowrap;">
+                ← Change
+            </a>
+        </div>
+        <?php endif; ?>
+
         <!-- Header area showing what they are booking -->
         <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 24px; margin-bottom: 32px; text-align: center;">
             <h2 style="font-size: 1.8rem; font-weight: 800; margin-bottom: 8px;">Complete Booking</h2>
@@ -257,31 +280,134 @@ if ($session_location) {
             
             <form action="" method="POST">
                 <input type="hidden" name="_csrf" value="<?php echo htmlspecialchars(csrf_token()); ?>">
+                <?php if ($tech_id): ?>
+                    <input type="hidden" name="tech_id" value="<?php echo (int)$tech_id; ?>">
+                <?php endif; ?>
                 
                 <div class="form-group">
                     <label for="service_date">Select Date</label>
-                    <input type="date" id="service_date" name="service_date" required class="form-control" min="<?php echo date('Y-m-d'); ?>">
+                    <input type="date" id="service_date" name="service_date" required class="form-control" 
+                           min="<?php echo date('Y-m-d'); ?>"
+                           style="font-size: 1rem; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--border-color); width: 100%; background: white; cursor: pointer;">
                 </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px;">
-                    
-                    <div>
-                        <label for="service_time" style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 0.9rem;">Time Slot</label>
-                        <select id="service_time" name="service_time" required class="form-control">
-                            <option value="">Select a slot</option>
-                            <option value="09:00:00">09:00 AM</option>
-                            <option value="10:00:00">10:00 AM</option>
-                            <option value="11:00:00">11:00 AM</option>
-                            <option value="12:00:00">12:00 PM</option>
-                            <option value="13:00:00">01:00 PM</option>
-                            <option value="14:00:00">02:00 PM</option>
-                            <option value="15:00:00">03:00 PM</option>
-                            <option value="16:00:00">04:00 PM</option>
-                            <option value="17:00:00">05:00 PM</option>
-                            <option value="18:00:00">06:00 PM</option>
-                        </select>
-                    </div>
+                <!-- Hidden input that stores the chosen slot value -->
+                <input type="hidden" id="service_time" name="service_time" required>
 
+                <!-- Slot picker: shows after a date is selected -->
+                <div id="slot-section" class="form-group" style="display: none;">
+                    <label style="display:block; margin-bottom: 12px; font-weight: 600;">Select Time Slot</label>
+                    <div id="slot-grid" style="display: flex; flex-wrap: wrap; gap: 10px;"></div>
+                    <p id="slot-message" style="color: var(--text-muted); font-size: 0.9rem; margin-top: 8px; display: none;"></p>
+                </div>
+
+                <!-- Loading indicator -->
+                <div id="slot-loading" style="display: none; padding: 12px; text-align: center; color: var(--text-muted); font-size: 0.9rem;">
+                    <i class="fa-solid fa-spinner fa-spin" style="margin-right: 6px;"></i> Loading available slots...
+                </div>
+
+                <script>
+                (function() {
+                    const dateEl  = document.getElementById('service_date');
+                    const timeEl  = document.getElementById('service_time');
+                    const section = document.getElementById('slot-section');
+                    const grid    = document.getElementById('slot-grid');
+                    const loading = document.getElementById('slot-loading');
+                    const msg     = document.getElementById('slot-message');
+                    const serviceId = <?php echo (int)$service_id; ?>;
+                    const techId    = <?php echo (int)$tech_id; ?>;
+
+                    dateEl.addEventListener('change', async function () {
+                        const date = dateEl.value;
+                        if (!date) return;
+
+                        // Reset
+                        timeEl.value = '';
+                        grid.innerHTML = '';
+                        msg.style.display = 'none';
+                        section.style.display = 'none';
+                        loading.style.display = 'block';
+
+                        try {
+                            const res = await fetch(`api/available_slots.php?service_id=${serviceId}&tech_id=${techId}&date=${date}`);
+                            const data = await res.json();
+
+                            loading.style.display = 'none';
+                            section.style.display = 'block';
+
+                            if (!data.ok || !data.slots || data.slots.length === 0) {
+                                msg.textContent = 'No slots available for this date.';
+                                msg.style.display = 'block';
+                                return;
+                            }
+
+                            data.slots.forEach(slot => {
+                                const btn = document.createElement('button');
+                                btn.type = 'button';
+                                btn.textContent = slot.display;
+                                btn.dataset.time = slot.time;
+
+                                if (!slot.available) {
+                                    // Booked slot — grayed out, not clickable
+                                    btn.disabled = true;
+                                    btn.style.cssText = `
+                                        padding: 10px 18px; border-radius: 10px;
+                                        border: 1.5px solid #e5e7eb; background: #f3f4f6;
+                                        color: #9ca3af; font-size: 0.9rem; font-weight: 500;
+                                        cursor: not-allowed; position: relative;`;
+                                    btn.title = 'Already booked';
+
+                                    // Strike-through text
+                                    btn.innerHTML = `<span style="text-decoration: line-through;">${slot.display}</span> <small style="display:block; font-size:0.7rem; color:#d1d5db;">Booked</small>`;
+                                } else {
+                                    // Available slot
+                                    btn.style.cssText = `
+                                        padding: 10px 18px; border-radius: 10px;
+                                        border: 1.5px solid var(--primary-color); background: white;
+                                        color: var(--primary-color); font-size: 0.9rem; font-weight: 600;
+                                        cursor: pointer; transition: all 0.2s;`;
+
+                                    btn.onmouseover = () => {
+                                        if (!btn.classList.contains('selected')) {
+                                            btn.style.background = '#EBF0FB';
+                                        }
+                                    };
+                                    btn.onmouseout = () => {
+                                        if (!btn.classList.contains('selected')) {
+                                            btn.style.background = 'white';
+                                        }
+                                    };
+
+                                    btn.addEventListener('click', function () {
+                                        // Deselect all
+                                        grid.querySelectorAll('button.selected').forEach(b => {
+                                            b.classList.remove('selected');
+                                            b.style.background = 'white';
+                                            b.style.color = 'var(--primary-color)';
+                                            b.style.borderColor = 'var(--primary-color)';
+                                        });
+                                        // Select this one
+                                        btn.classList.add('selected');
+                                        btn.style.background = 'var(--primary-color)';
+                                        btn.style.color = 'white';
+                                        btn.style.borderColor = 'var(--primary-color)';
+                                        timeEl.value = slot.time;
+                                    });
+                                }
+                                grid.appendChild(btn);
+                            });
+
+                        } catch (e) {
+                            loading.style.display = 'none';
+                            section.style.display = 'block';
+                            msg.textContent = 'Failed to load slots. Please try again.';
+                            msg.style.display = 'block';
+                        }
+                    });
+                })();
+                </script>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px; margin-top: 24px;">
                     <div>
                         <label for="technician_count" style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 0.9rem;">Technician Quantity</label>
                         <select id="technician_count" name="technician_count" required class="form-control">
@@ -290,7 +416,6 @@ if ($session_location) {
                             <option value="3">3 Technicians</option>
                         </select>
                     </div>
-                    
                 </div>
 
                 <div class="form-group">

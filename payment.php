@@ -11,10 +11,7 @@ if (!isset($_SESSION['user_id']) || empty($_SESSION['pending_booking'])) {
     exit();
 }
 
-if (empty($_SESSION['otp_verified'])) {
-    header('Location: otp.php');
-    exit();
-}
+
 
 $error = '';
 
@@ -56,23 +53,20 @@ try{
 
 $pdo->beginTransaction();
 
-$slotStmt = $pdo->prepare("SELECT id,available_count FROM booking_slots 
-WHERE service_id=? AND date=? AND time=? FOR UPDATE");
+// --- Server-side double-booking guard (per technician) ---
+$techId = !empty($pending['technician_id']) ? (int)$pending['technician_id'] : null;
 
-$slotStmt->execute([$service_id,$service_date,$service_time]);
-$slot=$slotStmt->fetch();
-
-if(!$slot || $slot['available_count'] < $technician_count){
-
-$pdo->rollBack();
-$error="No technicians available";
-
-}else{
-
-$updateSlot=$pdo->prepare("UPDATE booking_slots 
-SET available_count=available_count-? WHERE id=?");
-
-$updateSlot->execute([$technician_count,$slot['id']]);
+if ($techId) {
+    $conflictStmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM bookings
+         WHERE technician_id = ? AND service_date = ? AND service_time = ?
+           AND status NOT IN ('Cancelled') FOR UPDATE"
+    );
+    $conflictStmt->execute([$techId, $service_date, $service_time]);
+    if ((int)$conflictStmt->fetchColumn() > 0) {
+        $pdo->rollBack();
+        $error = "This time slot is already booked for the selected provider. Please go back and choose another slot.";
+    } else {
 
 
 $year=date("Y");
@@ -105,14 +99,14 @@ $fullAddress=$pending['full_address'];
 
 $insert=$pdo->prepare("
 INSERT INTO bookings
-(booking_unique_id,user_id,service_id,technician_count,service_date,service_time,
+(booking_unique_id,user_id,service_id,technician_id,technician_count,service_date,service_time,
 emergency_level,address,full_address,state,city,area,pincode,flat_no,landmark,
 latitude,longitude,contact,contact_number,preferred_time,
 payment_method,payment_status,coupon_code,discount_amount,subtotal_amount,total_amount,
 problem_description,status)
 
 VALUES
-(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ");
 
 $insert->execute([
@@ -120,6 +114,7 @@ $insert->execute([
 $booking_unique_id,
 $user_id,
 $service_id,
+!empty($pending['technician_id']) ? (int)$pending['technician_id'] : null,
 $technician_count,
 $service_date,
 $service_time,
@@ -166,6 +161,11 @@ unset($_SESSION['otp_verified']);
 header("Location: thank_you.php?bk=".$booking_unique_id);
 exit();
 
+    } // end else (no conflict)
+} else {
+    // No technician selected — proceed without conflict check (fallback)
+    $pdo->rollBack();
+    $error = "No provider selected. Please go back and choose a service provider.";
 }
 
 }catch(PDOException $e){

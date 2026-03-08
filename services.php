@@ -88,7 +88,7 @@ if (!empty($_GET['category'])) {
                             ₹<?php echo number_format($service['price'], 2); ?>
                         </div>
                         
-                        <a class="book-btn" href="booking.php?service_id=<?php echo (int)$service['id']; ?>" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center;">
+                        <a class="book-btn" href="technicians.php?service_id=<?php echo (int)$service['id']; ?>" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center;">
                             Book Now
                         </a>
                     </div>

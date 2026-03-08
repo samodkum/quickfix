@@ -426,23 +426,45 @@ include 'includes/header.php';
                         <p style="margin: 0 0 8px 0; font-weight: 600; font-size: 1.1rem; color: var(--text-main);"><i class="fa-solid fa-user" style="color: var(--text-muted); font-size: 0.9rem; margin-right: 6px;"></i> <?php echo htmlspecialchars($booking['customer_name']); ?></p>
                         <p style="margin: 0 0 16px 0; color: var(--text-muted); font-size: 0.9rem;"><i class="fa-solid fa-phone" style="margin-right: 6px;"></i> <?php echo htmlspecialchars($booking['contact_number']); ?></p>
                         
-                        <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.05em;">Pref. Time</p>
-                        <p style="margin: 0; color: var(--text-main); font-weight: 500;"><i class="fa-solid fa-clock" style="color: var(--text-muted); margin-right: 6px;"></i> <?php echo htmlspecialchars($booking['preferred_time']); ?></p>
+                        <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.05em;">Scheduled For</p>
+                        <?php
+                            $disp_date = !empty($booking['service_date']) ? date('D, d M Y', strtotime($booking['service_date'])) : '—';
+                            $disp_time = '—';
+                            if (!empty($booking['service_time'])) {
+                                $h = (int)substr($booking['service_time'], 0, 2);
+                                $disp_time = ($h === 12 ? 12 : $h % 12) . ':00 ' . ($h < 12 ? 'AM' : 'PM');
+                            }
+                        ?>
+                        <p style="margin: 0 0 4px 0; color: var(--text-main); font-weight: 600;">
+                            <i class="fa-solid fa-calendar" style="color: var(--primary-color); margin-right: 6px;"></i><?php echo $disp_date; ?>
+                        </p>
+                        <p style="margin: 0; color: var(--text-main); font-weight: 600;">
+                            <i class="fa-solid fa-clock" style="color: var(--accent-color); margin-right: 6px;"></i><?php echo $disp_time; ?>
+                        </p>
                     </div>
 
-                    <!-- Col 2: Assignment -->
+                    <!-- Col 2: Provider (Customer-Chosen) -->
                     <div>
-                        <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.05em;">Assigned Technician</p>
+                        <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.05em;">Service Provider</p>
                         <?php if($booking['technician_name']): ?>
+                            <!-- Badge showing this was customer's choice -->
+                            <div style="margin-bottom: 6px;">
+                                <span style="background: rgba(59,130,246,0.1); color: #3B82F6; font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 50px; text-transform: uppercase; letter-spacing: 0.05em;">
+                                    ✓ Customer Chose
+                                </span>
+                            </div>
                             <div style="display: flex; align-items: center; gap: 10px; background: var(--bg-color); padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color);">
-                                <div style="width: 32px; height: 32px; background: var(--accent-color); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700;">
+                                <div style="width: 32px; height: 32px; background: var(--primary-color); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700;">
                                     <?php echo substr($booking['technician_name'], 0, 1); ?>
                                 </div>
-                                <span style="font-weight: 600; color: var(--text-main);"><?php echo htmlspecialchars($booking['technician_name']); ?></span>
+                                <div>
+                                    <div style="font-weight: 700; color: var(--text-main); font-size: 0.95rem;"><?php echo htmlspecialchars($booking['technician_name']); ?></div>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted);">Pre-selected by customer</div>
+                                </div>
                             </div>
                         <?php else: ?>
                             <div style="background: rgba(245, 158, 11, 0.1); color: #F59E0B; padding: 10px 12px; border-radius: 8px; font-size: 0.9rem; font-weight: 600; border: 1px dashed #F59E0B;">
-                                <i class="fa-solid fa-triangle-exclamation"></i> Unassigned
+                                <i class="fa-solid fa-triangle-exclamation"></i> No provider selected
                             </div>
                         <?php endif; ?>
                     </div>

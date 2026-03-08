@@ -221,11 +221,12 @@ try {
                     <!-- Header -->
                     <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                         <div style="display: flex; gap: 16px; align-items: center;">
-                            <div style="width: 48px; height: 48px; background: var(--bg-color); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 1.25rem; font-weight: 800; color: var(--text-muted); border: 2px solid var(--border-color);">
-                                <?php if(!empty($tech['photo'])): ?>
-                                    <img src="../<?php echo htmlspecialchars($tech['photo']); ?>" alt="Tech" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
+                            <div style="width: 48px; height: 48px; background: var(--bg-color); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 1.25rem; font-weight: 800; color: var(--text-muted); border: 2px solid var(--border-color); overflow: hidden;">
+                                <?php if(!empty($tech['photo']) && file_exists('../' . $tech['photo'])): ?>
+                                    <img src="../<?php echo htmlspecialchars($tech['photo']); ?>" alt="Tech" style="width: 100%; height: 100%; object-fit: cover;">
                                 <?php else: ?>
-                                    <?php echo strtoupper(substr($tech['name'], 0, 1)); ?>
+                                    <!-- Random portrait placeholder -->
+                                    <img src="https://randomuser.me/api/portraits/men/<?php echo ($tech['id'] % 90) + 1; ?>.jpg" alt="Tech" style="width: 100%; height: 100%; object-fit: cover;">
                                 <?php endif; ?>
                             </div>
                             <div>
